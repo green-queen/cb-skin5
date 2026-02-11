@@ -1,0 +1,240 @@
+<script>
+/* include full item dataset and display logic so offcanvas matches item page */
+{%- assign mfields = site.data.config-metadata -%}
+{%- assign stubs = site.data.config-nav | map: 'stub' | join: ';' -%}
+{%- assign cb_items = site.data[site.metadata] | where_exp: 'item','item.objectid' -%}
+var cb_items = [ 
+    {%- for item in cb_items -%}
+    { "objectid": {{ item.objectid | jsonify }}, {% if item.parentid %}"parentid": {{ item.parentid | jsonify }}, {% endif %}{% if item.title %}{% unless mfields contains 'title' %}"title": {{ item.title | jsonify }}, {% endunless %}{% endif %}{% for f in mfields %}{% if item[f.field] %}{{ f.field | jsonify }}: {{ item[f.field] | jsonify }}, {% endif %}{% endfor %}{% if item.youtubeid %} "youtubeid": {{ item.youtubeid | jsonify }}, {% endif %}{% if item.vimeoid %} "vimeoid": {{ item.vimeoid | jsonify }}, {% endif %}"format": {{ item.format | jsonify }},{% if item.image_small %} "image_small": {{ item.image_small | relative_url | jsonify }}, {% endif %}{% if item.image_thumb %} "image_thumb": {{ item.image_thumb | relative_url | jsonify }}, {% endif %} "filename": {% if item.object_location %}{% if item.object_location contains '/' %}{{ item.object_location | relative_url | jsonify }}{% else %}{{ ("/objects/" | append: item.object_location) | relative_url | jsonify }}{% endif %}{% else %}""{% endif %} }{% unless forloop.last %}, {% endunless %}
+    {% endfor %}
+];
+
+/* helper to find file link (same as item page) */
+function findFileLink(record) {
+    if (!record || !record.filename) return "";
+    // Check if filename already has the full path (contains / or http)
+    if (record.filename.includes('/') || record.filename.startsWith('http')) {
+        return record.filename;
+    }
+    // Otherwise prepend the objects directory
+    return "{{ '/objects/' | relative_url }}" + record.filename;
+}
+
+/* openOffcanvas: find record and render into offcanvas using adapted display logic */
+function openOffcanvas(objectid) {
+    var record_index = cb_items.findIndex(item => item.objectid == objectid);
+    if (record_index === -1) return;
+    var record = cb_items[record_index];
+    var child_records = cb_items.filter(item => item.parentid == objectid);
+
+    function addItem(item, mainRecord) {
+        var itemDisplay = '';
+        var itemDownload = '';
+        var fileLink = findFileLink(item);
+        var lowerFormat = (item.format || '').toString().toLowerCase();
+
+        // Determine whether we have an image-like source available even if format is missing
+        var imgCandidate = fileLink || item.image_thumb || item.image_small || item.filename || '';
+        var looksLikeImage = /\.(jpe?g|png|gif|webp|svg)$/i.test(imgCandidate) || lowerFormat.indexOf('image') !== -1 || item.image_thumb || item.image_small;
+        var looksLikePdf = lowerFormat.indexOf('pdf') !== -1 || (fileLink && fileLink.toLowerCase().endsWith('.pdf'));
+
+        if (looksLikeImage) {
+            // Use best available image for display; prefer the true file link (full-resolution) for the lightbox href
+            var imgSrc = fileLink || item.image_thumb || item.image_small || item.filename || '';
+            if (imgSrc) {
+                itemDisplay = '<a class="spotlight gallery-img" data-download="true" href="' + (fileLink || imgSrc) + '">';
+                itemDisplay += '<img class="img-fluid" src="' + imgSrc + '" alt="' + (item.title || 'Image preview') + '">';
+                itemDisplay += '</a>';
+                // Show helpful hint only when linking to a full-resolution image
+                if (fileLink && fileLink !== imgSrc) {
+                    itemDisplay += '<div class="text-center small text-dark mt-1">Click image to open full resolution</div>';
+                }
+                itemDownload = fileLink ? '<a href="' + fileLink + '" target="_blank" rel="noopener" class="btn btn-outline-danger" title="Object download">Download ' + (item.format ? item.format.split('/').pop().toUpperCase() : '') + '</a>' : '';
+            } else {
+                // No usable preview found - show default icon
+                itemDisplay = '<div class="text-center py-4"><img class="w-50" src="{{ "/assets/lib/icons/" | relative_url }}{{ icons.icon-default }}.svg" alt="No preview available"></div>';
+                itemDownload = fileLink ? '<a href="' + fileLink + '" target="_blank" rel="noopener" class="btn btn-outline-danger" title="Object download">Download</a>' : '';
+            }
+        } else if (looksLikePdf) {
+            if (fileLink) {
+                // Embed PDF with iframe and add <embed> fallback for broader compatibility
+                itemDisplay = '<div class="ratio ratio-4x3">';
+                itemDisplay += '<iframe title="PDF file of ' + (item.title || '') + '" src="' + fileLink + '" style="width:100%;height:600px;border:0;" ></iframe>';
+                itemDisplay += '<embed src="' + fileLink + '" type="application/pdf" width="100%" height="600" />';
+                itemDisplay += '</div>';
+                itemDownload = '<a href="' + fileLink + '" target="_blank" rel="noopener" class="btn btn-outline-danger" title="Object download">Download PDF</a>';
+            } else {
+                itemDisplay = '<p>PDF not available</p>';
+                itemDownload = '';
+            }
+        } else if (lowerFormat.indexOf('audio') !== -1) {
+            itemDisplay = fileLink ? '<audio controls class="w-100"><source src="' + fileLink + '">Your browser does not support the audio element. Please <a href="' + fileLink + '">download the audio file</a>.</audio>' : '<p>Audio not available</p>';
+            itemDownload = fileLink ? '<a href="' + fileLink + '" target="_blank" rel="noopener" class="btn btn-outline-danger" title="Object download">Download ' + (item.format ? item.format.split('/').pop().toUpperCase() : '') + '</a>' : '';
+        } else if (item.youtubeid) {
+            itemDisplay = '<div class="ratio ratio-16x9"><iframe title="video embed ' + (item.title || '') + '" src="https://www.youtube-nocookie.com/embed/' + item.youtubeid + '?enablejsapi=1&rel=0&modestbranding=1" allowfullscreen></iframe></div>';
+            itemDownload = '<a href="https://youtu.be/' + item.youtubeid + '" target="_blank" rel="noopener" class="btn btn-outline-danger" title="Object download">View on YouTube</a>';
+        } else if (item.vimeoid) {
+            itemDisplay = '<div class="ratio ratio-16x9"><iframe title="video embed ' + (item.title || '') + '" src="https://player.vimeo.com/video/' + item.vimeoid + '" allowfullscreen></iframe></div>';
+            itemDownload = '<a href="https://vimeo.com/' + item.vimeoid + '" target="_blank" rel="noopener" class="btn btn-outline-danger" title="Object download">View on Vimeo</a>';
+        } else if (lowerFormat.indexOf('video') !== -1) {
+            itemDisplay = fileLink ? '<video controls class="w-100"><source src="' + fileLink + '">Your browser does not support the video tag. Please <a href="' + fileLink + '">download the video file</a>.</video>' : '<p>Video not available</p>';
+            itemDownload = fileLink ? '<a href="' + fileLink + '" target="_blank" rel="noopener" class="btn btn-outline-danger" title="Object download">Download ' + (item.format ? item.format.split('/').pop().toUpperCase() : '') + '</a>' : '';
+        } else if (lowerFormat.indexOf('record') !== -1) {
+            itemDisplay = item === mainRecord ? '' : '<img class="w-25" src="{{ "/assets/lib/icons/" | relative_url }}{{ icons.icon-record }}.svg" alt="No preview found">';
+            itemDownload = fileLink ? '<a href="' + fileLink + '" target="_blank" rel="noopener" class="btn btn-outline-danger" title="Object download">Link to Object</a>' : '';
+        } else {
+            itemDisplay = '<img class="w-50" src="{{ "/assets/lib/icons/" | relative_url }}{{ icons.icon-default }}.svg" alt="No preview found">';
+            itemDownload = fileLink ? '<a href="' + fileLink + '" target="_blank" rel="noopener" class="btn btn-outline-danger" title="Object download">Download Object</a>' : '';
+        }
+
+        return { itemDisplay: itemDisplay, itemDownload: itemDownload };
+    }
+
+    function generateMetadata(item) {
+        var fields_html = '<dl>';
+        {% for f in mfields %}{% if f.browse_link == "true" %}
+        if (item[{{ f.field | jsonify }}]) {
+            var topics = item[{{ f.field | jsonify }}].split(';');
+            var browseLinks = "";
+            for (var i = 0, len = topics.length; i < len; i++) {
+                if (topics[i] != "") {
+                    browseLinks += '<a class="btn btn-link" href="{{ '/browse.html' | relative_url }}#' + encodeURIComponent(topics[i].trim()) + '">' + topics[i].trim() + '</a> ';
+                }
+            }
+            fields_html += '<dt class="field">{{ f.display_name }}:</dt> <dd class="field-value">' + browseLinks + '</dd>';
+        }
+        {%- else -%}
+        if (item[{{ f.field | jsonify }}]) { fields_html += '<dt class="field">{{ f.display_name }}:</dt> <dd class="field-value">{% if f.external_link == "true" %}<a href="' + item[{{ f.field | jsonify }}] + '" target="_blank" rel="noopener">' + item[{{ f.field | jsonify }}] + '</a>{% else %}' + item[{{ f.field | jsonify }}] + '{% endif %}</dd>'; }
+        {% endif %}{% endfor %}
+        fields_html += '</dl>';
+        return fields_html;
+    }
+
+    // build content
+    var itemImageHTML = '';
+    var itemLinkHTML = '';
+    var compoundDownload = '';
+
+    if (child_records.length > 0) {
+        var compound_html = '';
+        compoundDownload = '<div class="btn-group" role="group">';
+        for (var i = 0; i < child_records.length; i++) {
+            var res = addItem(child_records[i], record);
+            compound_html += '<div class="mb-2">' + res.itemDisplay + '</div>';
+            compoundDownload += res.itemDownload ? res.itemDownload : '';
+        }
+        compoundDownload += '</div>';
+        itemImageHTML = compound_html;
+        itemLinkHTML = compoundDownload;
+    } else {
+        var resMain = addItem(record, record);
+        itemImageHTML = resMain.itemDisplay;
+        itemLinkHTML = resMain.itemDownload;
+    }
+
+    var itemFormat = '';
+    if (child_records.length > 0) {
+        itemFormat = record.format.replace("_", " ").toUpperCase() + ' (' + child_records.length + ' Items)';
+    } else if (record.format && record.format.includes('pdf')) {
+        itemFormat = 'PDF';
+    } else if (record.format && record.format.includes('/')) {
+        itemFormat = record.format.split('/')[0].toUpperCase();
+    } else {
+        itemFormat = record.format ? record.format.replace("_", " ").toUpperCase() : '';
+    }
+
+    document.getElementById("bc-title").innerHTML = record.title ? record.title : '';
+    document.getElementById("item-format").innerHTML = itemFormat;
+    document.getElementById("item-title").innerHTML = (record.format && record.format.includes('record')) ? (record.title ? record.title : '') : (record.title ? record.title + '<a href="#item-metadata" class="ms-5 btn btn-sm btn-outline-dark small">Item Info <svg class="bi icon-sprite" role="img" aria-label="Jump to Item Info"><use xlink:href="{{ "/assets/lib/cb-icons.svg" | relative_url }}#arrow-down"/></svg></a>' : '');
+
+    var itemContent = '<div class="card mb-4 text-center">' + itemImageHTML + '<div class="card-body">' + itemLinkHTML + '</div></div>';
+    document.getElementById("item-content").innerHTML = itemContent;
+    document.getElementById("item-metadata").innerHTML = generateMetadata(record);
+
+    document.getElementById("browse-buttons").innerHTML = '<a class="btn btn-secondary" href="{{ '/browse.html' | relative_url }}">&laquo; Back to Collection Browse</a>';
+}
+</script>
+
+<style>
+/* default hidden for subject chips and title overlay used by floating cards */
+.card-subjects, .card-title {
+  display: flex;
+  gap: 0.25rem;
+  background: transparent;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 140ms ease, transform 140ms ease;
+  z-index: 20;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.card-title {
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    background: rgba(0,0,0,0.6);
+    color: white;
+    padding: 0.5rem;
+}
+
+.card-subjects {
+    background: rgba(0,0,0,0.6);
+    color: white;
+}
+
+.card-subjects a {
+    color: white;
+    text-decoration: none;
+    background: rgba(255,255,255,0.2);
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.65rem;
+}
+
+.card-subjects a:hover {
+    background: rgba(255,255,255,0.4);
+}
+
+/* show on hover of the card button */
+button:hover .card-subjects,
+button:hover .card-title {
+  opacity: 1;
+  transform: translateY(0);
+}
+</style>
+
+<!-- Offcanvas markup for item preview -->
+<div class="offcanvas offcanvas-start" tabindex="-1" id="offcanvasExample" aria-labelledby="offcanvasExampleLabel">
+    <div class="offcanvas-body">
+        <div>
+            <div class="container py-3">
+                <ul class="breadcrumb h6">
+                    <li class="breadcrumb-item"><a class="text-dark" href="{{ '/' | relative_url }}">{{ site.title }}</a></li>
+                    <li class="breadcrumb-item"><a class="text-dark" href="{{ '/browse.html' | relative_url }}">Browse</a></li>
+                    <li id="bc-title" class="breadcrumb-item active text-dark" aria-current="page"></li>
+                </ul>
+            <div class="my-0 h5 small" id="item-format"></div>
+            <h2 id="item-title" class="mb-3"></h2>
+
+        <div class="row justify-content-center">
+
+        <div class="col-12 col-md-10">
+            <div id="item-content"></div>
+        </div>
+        <div class="col-12 col-md-10">
+            <div id="item-metadata">
+            </div>
+        </div>
+    </div>
+
+                <div id="browse-buttons" class="text-center">
+                    <a class="btn btn-secondary" href="{{ '/browse.html' | relative_url }}">&laquo; Back to Collection Browse</a>
+                </div>
+                <div id="item-nav"></div>
+            
+            </div>
+        </div>
+    </div>
+</div>
